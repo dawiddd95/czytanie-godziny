@@ -12,7 +12,9 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 
@@ -25,7 +27,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
     private static final int NOTIFICATION_ID = 1;
 
     // Parametry detekcji stuknięć
-    private static final double TAP_THRESHOLD = 15.0;    // Próg przyspieszenia (m/s²)
+    private static final double TAP_THRESHOLD = 8.0;     // Próg przyspieszenia (m/s²) - niższy = czulszy
     private static final int REQUIRED_TAPS = 3;           // Wymagana liczba stuknięć
     private static final long TAP_WINDOW_MS = 1500;        // Okno czasowe na 3 stuknięcia (ms)
     private static final long TAP_COOLDOWN_MS = 300;       // Minimalny czas między stuknięciami (ms)
@@ -35,6 +37,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
     private Sensor accelerometer;
     private PolishTimeSpeaker timeSpeaker;
     private PowerManager.WakeLock wakeLock;
+    private Handler mainHandler;
 
     private long[] tapTimestamps = new long[REQUIRED_TAPS];
     private int tapCount = 0;
@@ -52,6 +55,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
 
         createNotificationChannel();
         timeSpeaker = new PolishTimeSpeaker(this);
+        mainHandler = new Handler(Looper.getMainLooper());
 
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
@@ -128,7 +132,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
                 long timeDiff = tapTimestamps[REQUIRED_TAPS - 1] - tapTimestamps[0];
                 if (timeDiff <= TAP_WINDOW_MS) {
                     Log.i(TAG, "3 stuknięcia wykryte w " + timeDiff + "ms! Ogłaszam godzinę.");
-                    timeSpeaker.speakCurrentTime();
+                    announceTimeWithRetry();
                     lastAnnounceTime = now;
                     tapCount = 0; // Reset
                 }
@@ -139,6 +143,22 @@ public class TapDetectorService extends Service implements SensorEventListener {
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
         // Nie potrzebujemy
+    }
+
+    /** Ogłasza godzinę, z ponowieniem próby jeśli TTS nie jest jeszcze gotowy */
+    private void announceTimeWithRetry() {
+        if (timeSpeaker.isReady()) {
+            timeSpeaker.speakCurrentTime();
+        } else {
+            Log.w(TAG, "TTS nie gotowy, ponawiam za 2 sekundy");
+            mainHandler.postDelayed(() -> {
+                if (timeSpeaker != null && timeSpeaker.isReady()) {
+                    timeSpeaker.speakCurrentTime();
+                } else {
+                    Log.w(TAG, "TTS nadal nie gotowy - spróbuj stuknąć ponownie za chwilę");
+                }
+            }, 2000);
+        }
     }
 
     private void createNotificationChannel() {
@@ -180,6 +200,10 @@ public class TapDetectorService extends Service implements SensorEventListener {
     public void onDestroy() {
         Log.i(TAG, "Serwis zatrzymany");
 
+        if (mainHandler != null) {
+            mainHandler.removeCallbacksAndMessages(null);
+        }
+
         if (sensorManager != null) {
             sensorManager.unregisterListener(this);
         }
@@ -195,4 +219,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
         super.onDestroy();
     }
 }
+
+
+
 

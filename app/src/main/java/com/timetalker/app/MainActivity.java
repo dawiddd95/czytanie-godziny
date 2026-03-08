@@ -6,6 +6,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.MotionEvent;
+import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -19,6 +21,14 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String PREFS_NAME = "timetalker_prefs";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
+
+    // Potrójne stuknięcie w ekran (gdy aplikacja otwarta)
+    private static final int TRIPLE_TAP_COUNT = 3;
+    private static final long TRIPLE_TAP_WINDOW_MS = 1500;
+    private static final long TRIPLE_TAP_COOLDOWN_MS = 300;
+    private long[] tripleTapTimes = new long[TRIPLE_TAP_COUNT];
+    private int tripleTapCount = 0;
+    private long lastTripleTapTime = 0;
 
     private Button btnToggle;
     private TextView tvStatus;
@@ -44,6 +54,8 @@ public class MainActivity extends AppCompatActivity {
         btnToggle = findViewById(R.id.btn_toggle);
         tvStatus = findViewById(R.id.tv_status);
         tvInfo = findViewById(R.id.tv_info);
+
+        setupTripleTapOnScreen();
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         isServiceRunning = prefs.getBoolean(KEY_SERVICE_ENABLED, false);
@@ -74,6 +86,49 @@ public class MainActivity extends AppCompatActivity {
                 }
             }, 1500);
         });
+    }
+
+    /** Wykrywa potrójne stuknięcie w ekran - działa gdy aplikacja jest otwarta */
+    private void setupTripleTapOnScreen() {
+        View rootLayout = findViewById(android.R.id.content);
+        rootLayout.setOnTouchListener((v, event) -> {
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                long now = System.currentTimeMillis();
+                if (now - lastTripleTapTime < TRIPLE_TAP_COOLDOWN_MS) return false;
+
+                lastTripleTapTime = now;
+                if (tripleTapCount < TRIPLE_TAP_COUNT) {
+                    tripleTapTimes[tripleTapCount] = now;
+                    tripleTapCount++;
+                } else {
+                    System.arraycopy(tripleTapTimes, 1, tripleTapTimes, 0, TRIPLE_TAP_COUNT - 1);
+                    tripleTapTimes[TRIPLE_TAP_COUNT - 1] = now;
+                }
+
+                if (tripleTapCount >= TRIPLE_TAP_COUNT) {
+                    long diff = tripleTapTimes[TRIPLE_TAP_COUNT - 1] - tripleTapTimes[0];
+                    if (diff <= TRIPLE_TAP_WINDOW_MS) {
+                        tripleTapCount = 0;
+                        speakTimeFromScreenTap();
+                        return true;
+                    }
+                }
+            }
+            return false;
+        });
+    }
+
+    private void speakTimeFromScreenTap() {
+        PolishTimeSpeaker speaker = new PolishTimeSpeaker(this);
+        findViewById(R.id.btn_test).postDelayed(() -> {
+            if (speaker.isReady()) {
+                speaker.speakCurrentTime();
+                findViewById(R.id.btn_test).postDelayed(speaker::shutdown, 5000);
+            } else {
+                Toast.makeText(this, "TTS nie jest gotowy, spróbuj ponownie", Toast.LENGTH_SHORT).show();
+                speaker.shutdown();
+            }
+        }, 1500);
     }
 
     private void requestPermissionsAndStart() {
@@ -126,4 +181,7 @@ public class MainActivity extends AppCompatActivity {
                 .apply();
     }
 }
+
+
+
 
