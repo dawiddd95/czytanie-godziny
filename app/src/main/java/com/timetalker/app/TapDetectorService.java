@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -23,15 +24,18 @@ import androidx.core.app.NotificationCompat;
 public class TapDetectorService extends Service implements SensorEventListener {
 
     private static final String TAG = "TapDetectorService";
-    private static final String CHANNEL_ID = "tap_detector_channel";
+    private static final String CHANNEL_ID = "shake_detector_channel";
     private static final int NOTIFICATION_ID = 1;
+    private static final String PREFS_NAME = "timetalker_prefs";
+    private static final String KEY_SHAKE_COUNT = "shake_count";
+    static final String ACTION_SHAKE_DETECTED = "com.timetalker.app.SHAKE_DETECTED";
 
-    // Parametry detekcji stuknięć
-    private static final double TAP_THRESHOLD = 8.0;     // Próg przyspieszenia (m/s²) - niższy = czulszy
-    private static final int REQUIRED_TAPS = 3;           // Wymagana liczba stuknięć
-    private static final long TAP_WINDOW_MS = 1500;        // Okno czasowe na 3 stuknięcia (ms)
-    private static final long TAP_COOLDOWN_MS = 300;       // Minimalny czas między stuknięciami (ms)
-    private static final long ANNOUNCE_COOLDOWN_MS = 3000;  // Cooldown po ogłoszeniu (ms)
+    // Parametry detekcji potrząśnięcia
+    private static final double SHAKE_THRESHOLD = 4.5;      // Próg przyspieszenia (m/s²)
+    private static final int SHAKE_MOVEMENTS = 4;          // Liczba ruchów do wykrycia potrząśnięcia
+    private static final long SHAKE_WINDOW_MS = 800;      // Okno czasowe na potrząśnięcie (ms)
+    private static final long SHAKE_PEAK_COOLDOWN_MS = 80; // Min. czas między liczeniem ruchów (ms)
+    private static final long ANNOUNCE_COOLDOWN_MS = 3000; // Cooldown po ogłoszeniu (ms)
 
     private SensorManager sensorManager;
     private Sensor accelerometer;
@@ -39,9 +43,10 @@ public class TapDetectorService extends Service implements SensorEventListener {
     private PowerManager.WakeLock wakeLock;
     private Handler mainHandler;
 
-    private long[] tapTimestamps = new long[REQUIRED_TAPS];
-    private int tapCount = 0;
-    private long lastTapTime = 0;
+    private long[] shakeTimestamps = new long[SHAKE_MOVEMENTS];
+    private int shakeCount = 0;
+    private boolean wasAboveThreshold = false;
+    private long lastPeakTime = 0;
     private long lastAnnounceTime = 0;
 
     // Gravity filter
@@ -101,48 +106,61 @@ public class TapDetectorService extends Service implements SensorEventListener {
 
         long now = System.currentTimeMillis();
 
-        // Sprawdź czy wykryto stuknięcie
-        if (magnitude > TAP_THRESHOLD) {
-            // Cooldown między stuknięciami
-            if (now - lastTapTime < TAP_COOLDOWN_MS) {
-                return;
-            }
+        // Wykrywanie potrząśnięcia: liczymy przejścia z poniżej progu do powyżej progu
+        boolean isAboveThreshold = magnitude > SHAKE_THRESHOLD;
 
-            // Cooldown po ogłoszeniu
+        if (isAboveThreshold && !wasAboveThreshold) {
+            // Nowe przejście w górę = jeden ruch potrząśnięcia
+            wasAboveThreshold = true;
+
             if (now - lastAnnounceTime < ANNOUNCE_COOLDOWN_MS) {
                 return;
             }
-
-            lastTapTime = now;
-
-            // Przesuń tablicę i dodaj nowy timestamp
-            if (tapCount < REQUIRED_TAPS) {
-                tapTimestamps[tapCount] = now;
-                tapCount++;
-            } else {
-                // Przesuń w lewo
-                System.arraycopy(tapTimestamps, 1, tapTimestamps, 0, REQUIRED_TAPS - 1);
-                tapTimestamps[REQUIRED_TAPS - 1] = now;
+            if (now - lastPeakTime < SHAKE_PEAK_COOLDOWN_MS) {
+                return;
             }
 
-            Log.d(TAG, "Stuknięcie wykryte! Liczba: " + tapCount + ", siła: " + String.format("%.1f", magnitude));
+            lastPeakTime = now;
 
-            // Sprawdź czy mamy 3 stuknięcia w oknie czasowym
-            if (tapCount >= REQUIRED_TAPS) {
-                long timeDiff = tapTimestamps[REQUIRED_TAPS - 1] - tapTimestamps[0];
-                if (timeDiff <= TAP_WINDOW_MS) {
-                    Log.i(TAG, "3 stuknięcia wykryte w " + timeDiff + "ms! Ogłaszam godzinę.");
+            if (shakeCount < SHAKE_MOVEMENTS) {
+                shakeTimestamps[shakeCount] = now;
+                shakeCount++;
+            } else {
+                System.arraycopy(shakeTimestamps, 1, shakeTimestamps, 0, SHAKE_MOVEMENTS - 1);
+                shakeTimestamps[SHAKE_MOVEMENTS - 1] = now;
+            }
+
+            Log.d(TAG, "Ruch potrząśnięcia: " + shakeCount + ", siła: " + String.format("%.1f", magnitude));
+
+            if (shakeCount >= SHAKE_MOVEMENTS) {
+                long timeDiff = shakeTimestamps[SHAKE_MOVEMENTS - 1] - shakeTimestamps[0];
+                if (timeDiff <= SHAKE_WINDOW_MS) {
+                    Log.i(TAG, "Potrząśnięcie wykryte w " + timeDiff + "ms! Ogłaszam godzinę.");
+                    incrementAndBroadcastShakeCount();
                     announceTimeWithRetry();
                     lastAnnounceTime = now;
-                    tapCount = 0; // Reset
+                    shakeCount = 0;
                 }
             }
+        } else if (!isAboveThreshold) {
+            wasAboveThreshold = false;
         }
     }
 
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
         // Nie potrzebujemy
+    }
+
+    private void incrementAndBroadcastShakeCount() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        int totalCount = prefs.getInt(KEY_SHAKE_COUNT, 0) + 1;
+        prefs.edit().putInt(KEY_SHAKE_COUNT, totalCount).apply();
+
+        Intent intent = new Intent(ACTION_SHAKE_DETECTED);
+        intent.setPackage(getPackageName());
+        intent.putExtra("count", totalCount);
+        sendBroadcast(intent);
     }
 
     /** Ogłasza godzinę, z ponowieniem próby jeśli TTS nie jest jeszcze gotowy */
@@ -155,7 +173,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
                 if (timeSpeaker != null && timeSpeaker.isReady()) {
                     timeSpeaker.speakCurrentTime();
                 } else {
-                    Log.w(TAG, "TTS nadal nie gotowy - spróbuj stuknąć ponownie za chwilę");
+                    Log.w(TAG, "TTS nadal nie gotowy - spróbuj potrząsnąć ponownie za chwilę");
                 }
             }, 2000);
         }
@@ -164,10 +182,10 @@ public class TapDetectorService extends Service implements SensorEventListener {
     private void createNotificationChannel() {
         NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "Detektor stuknięć",
+                "Detektor potrząśnięcia",
                 NotificationManager.IMPORTANCE_LOW
         );
-        channel.setDescription("Powiadomienie o działaniu detektora stuknięć w tle");
+        channel.setDescription("Powiadomienie o działaniu detektora potrząśnięcia w tle");
         channel.setShowBadge(false);
 
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -183,7 +201,7 @@ public class TapDetectorService extends Service implements SensorEventListener {
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Czytanie godziny")
-                .setContentText("Stuknij 3 razy w telefon żeby usłyszeć godzinę")
+                .setContentText("Potrząśnij telefonem żeby usłyszeć godzinę")
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)

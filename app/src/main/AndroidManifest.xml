@@ -34,7 +34,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Tap detection using accelerometer to announce time" />
+                android:value="Shake detection using accelerometer to announce time" />
         </service>
 
         <receiver

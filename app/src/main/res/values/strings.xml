@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Czytanie Godziny</string>
-    <string name="info_text">Stuknij 3 razy w telefon (lub w ekran, gdy aplikacja jest otwarta), a usłyszysz aktualną godzinę.\n\nDziała również w tle z wyłączonym ekranem.</string>
-    <string name="footer_text">Aplikacja wykorzystuje akcelerometr do wykrywania stuknięć.\nUpewnij się, że synteza mowy po polsku jest zainstalowana.</string>
+    <string name="info_text">Potrząśnij telefonem (lub stuknij 3 razy w ekran, gdy aplikacja jest otwarta), a usłyszysz aktualną godzinę.\n\nDziała w tle z wyłączonym ekranem.</string>
+    <string name="footer_text">Aplikacja wykorzystuje akcelerometr do wykrywania potrząśnięcia.\nUpewnij się, że synteza mowy po polsku jest zainstalowana.</string>
 </resources>
 
 

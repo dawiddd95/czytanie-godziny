@@ -1,7 +1,10 @@
 package com.timetalker.app;
 
 import android.Manifest;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -21,6 +24,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String PREFS_NAME = "timetalker_prefs";
     private static final String KEY_SERVICE_ENABLED = "service_enabled";
+    private static final String KEY_SHAKE_COUNT = "shake_count";
 
     // Potrójne stuknięcie w ekran (gdy aplikacja otwarta)
     private static final int TRIPLE_TAP_COUNT = 3;
@@ -32,8 +36,10 @@ public class MainActivity extends AppCompatActivity {
 
     private Button btnToggle;
     private TextView tvStatus;
+    private TextView tvShakeCount;
     private TextView tvInfo;
     private boolean isServiceRunning = false;
+    private BroadcastReceiver shakeCountReceiver;
 
     private final ActivityResultLauncher<String> notificationPermissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
@@ -53,9 +59,12 @@ public class MainActivity extends AppCompatActivity {
 
         btnToggle = findViewById(R.id.btn_toggle);
         tvStatus = findViewById(R.id.tv_status);
+        tvShakeCount = findViewById(R.id.tv_shake_count);
         tvInfo = findViewById(R.id.tv_info);
 
         setupTripleTapOnScreen();
+        setupShakeCountReceiver();
+        updateShakeCount();
 
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
         isServiceRunning = prefs.getBoolean(KEY_SERVICE_ENABLED, false);
@@ -148,7 +157,7 @@ public class MainActivity extends AppCompatActivity {
         isServiceRunning = true;
         saveState();
         updateUI();
-        Toast.makeText(this, "Detektor stuknięć uruchomiony!", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Detektor potrząśnięcia uruchomiony!", Toast.LENGTH_SHORT).show();
     }
 
     private void stopTapService() {
@@ -157,7 +166,36 @@ public class MainActivity extends AppCompatActivity {
         isServiceRunning = false;
         saveState();
         updateUI();
-        Toast.makeText(this, "Detektor stuknięć zatrzymany", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Detektor potrząśnięcia zatrzymany", Toast.LENGTH_SHORT).show();
+    }
+
+    private void setupShakeCountReceiver() {
+        shakeCountReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                int count = intent.getIntExtra("count", 0);
+                tvShakeCount.setText("Potrząśnięć: " + count);
+            }
+        };
+        IntentFilter filter = new IntentFilter(TapDetectorService.ACTION_SHAKE_DETECTED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(shakeCountReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(shakeCountReceiver, filter);
+        }
+    }
+
+    private void updateShakeCount() {
+        int count = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getInt(KEY_SHAKE_COUNT, 0);
+        tvShakeCount.setText("Potrząśnięć: " + count);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (shakeCountReceiver != null) {
+            unregisterReceiver(shakeCountReceiver);
+        }
+        super.onDestroy();
     }
 
     private void updateUI() {
